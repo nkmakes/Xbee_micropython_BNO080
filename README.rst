@@ -25,6 +25,7 @@ Usage Example
 =============
 
 .. code-block:: python3
+
     from utime import sleep
     from machine import I2C
     from i2c import BNO08X_I2C
