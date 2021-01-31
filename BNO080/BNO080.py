@@ -1,5 +1,5 @@
 # pylint:disable=too-many-lines
-# SPDX-FileCopyrightText: Copyright (c) 2020 Niko Rodriguez
+# SPDX-FileCopyrightText: Copyright (c) 2021 Niko Rodriguez
 #
 # SPDX-License-Identifier: MIT
 """
@@ -24,7 +24,7 @@ Implementation Notes
 
 **Software and Dependencies:**
 
-* `Xbee machine module <https:# github.com/adafruit/Adafruit_CircuitPython_BusDevice>`_
+* `Digi XBee MicroPython PyCharm IDE Plugin <https://www.digi.com/products/embedded-systems/digi-xbee/digi-xbee-tools/digi-xbee-pycharm-ide-plug-in>`_
 """
 __version__ = "0.0.0-auto.0"
 __repo__ = "https:# github.com/nkmakes/Xbee_micropython_BNO080.git"
