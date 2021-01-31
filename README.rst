@@ -5,7 +5,7 @@ Helper library for the Hillcrest Laboratories BNO08x IMUs
 and xbee i2c capable devices
 
 
-* Based upon "adafruit_BNO080" for CPython by Bryan Siepert
+* Based upon `"adafruit_BNO080" for CPython by Bryan Siepert<https://github.com/adafruit/Adafruit_CircuitPython_BNO08x>`
 * Port to Micropython by Niko Rodriguez
 
 
