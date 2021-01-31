@@ -1,40 +1,40 @@
 # pylint:disable=too-many-lines
-# SPDX-FileCopyrightText: Copyright (c) 2020 Bryan Siepert for Adafruit Industries
+# SPDX-FileCopyrightText: Copyright (c) 2020 Niko Rodriguez
 #
 # SPDX-License-Identifier: MIT
 """
-`adafruit_bno08x`
+`xbee_BNO080`
 ================================================================================
 
 Helper library for the Hillcrest Laboratories BNO08x IMUs
+and xbee i2c capable devices
 
 
+* Based upon "adafruit_BNO080" for CPython by Bryan Siepert
 * Author(s): Bryan Siepert
+* Port to Micropython by Niko Rodriguez
 
 Implementation Notes
 --------------------
 
 **Hardware:**
 
-* `Adafruit BNO08x Breakout <https:www.adafruit.com/products/4754>`_
+* `Sparkfun XBEE thing plus <https://www.sparkfun.com/products/15435>`
+* `SparkFun VR IMU Breakout - BNO080 (Qwiic) <https://www.sparkfun.com/products/14686>`
 
 **Software and Dependencies:**
 
-* Adafruit CircuitPython firmware for the supported boards:
-  https:# github.com/adafruit/circuitpython/releases
-
-* `Adafruit's Bus Device library <https:# github.com/adafruit/Adafruit_CircuitPython_BusDevice>`_
+* `Xbee machine module <https:# github.com/adafruit/Adafruit_CircuitPython_BusDevice>`_
 """
 __version__ = "0.0.0-auto.0"
-__repo__ = "https:# github.com/adafruit/Adafruit_CircuitPython_BNO08x.git"
-
-from struct import unpack_from, pack_into
-from collections import namedtuple
-import time
+__repo__ = "https:# github.com/nkmakes/Xbee_micropython_BNO080.git"
 from micropython import const
+from ustruct import unpack_from, pack_into
+import time
+import utime
 
 # TODO: Remove on release
-from .debug import channels, reports
+from debug import channels, reports
 
 # TODO: shorten names
 # Channel 0: the SHTP command channel
@@ -102,8 +102,9 @@ BNO_REPORT_GYRO_INTEGRATED_ROTATION_VECTOR = const(0x2A)
 # RAW ACCEL, MAG, GYRO # Sfe says each needs the non-raw enabled to work
 
 _DEFAULT_REPORT_INTERVAL = const(50000)  # in microseconds = 50ms
-_QUAT_READ_TIMEOUT = 0.500  # timeout in seconds
-_PACKET_READ_TIMEOUT = 2.000  # timeout in seconds
+_QUAT_READ_TIMEOUT = 500  # timeout in seconds
+#_PACKET_READ_TIMEOUT = 20000  # timeout in seconds
+_PACKET_READ_TIMEOUT = 20000000
 _FEATURE_ENABLE_TIMEOUT = 2.0
 _DEFAULT_TIMEOUT = 2.0
 _BNO08X_CMD_RESET = const(0x01)
@@ -177,11 +178,8 @@ _ENABLED_ACTIVITIES = (
     0x1FF  # All activities; 1 bit set for each of 8 activities, + Unknown
 )
 
-DATA_BUFFER_SIZE = const(512)  # data buffer size. obviously eats ram
-PacketHeader = namedtuple(
-    "PacketHeader",
-    ["channel_number", "sequence_number", "data_length", "packet_byte_count",],
-)
+DATA_BUFFER_SIZE = const(256)  # data buffer size. obviously eats ram
+
 
 REPORT_ACCURACY_STATUS = [
     "Accuracy Unreliable",
@@ -198,7 +196,7 @@ class PacketError(Exception):
 
 
 def _elapsed(start_time):
-    return time.monotonic() - start_time
+    return utime.ticks_diff(start_time, utime.ticks_ms())
 
 
 ############ PACKET PARSING ###########################
@@ -213,12 +211,12 @@ def _parse_sensor_report_data(report_bytes):
     else:
         format_str = "<h"
     results = []
-    accuracy = unpack_from("<B", report_bytes, offset=2)[0]
+    accuracy = unpack_from("<B", report_bytes, 2)[0]
     accuracy &= 0b11
 
     for _offset_idx in range(count):
         total_offset = data_offset + (_offset_idx * 2)
-        raw_data = unpack_from(format_str, report_bytes, offset=total_offset)[0]
+        raw_data = unpack_from(format_str, report_bytes, total_offset)[0]
         scaled_data = raw_data * scalar
         results.append(scaled_data)
     results_tuple = tuple(results)
@@ -227,11 +225,11 @@ def _parse_sensor_report_data(report_bytes):
 
 
 def _parse_step_couter_report(report_bytes):
-    return unpack_from("<H", report_bytes, offset=8)[0]
+    return unpack_from("<H", report_bytes, 8)[0]
 
 
 def _parse_stability_classifier_report(report_bytes):
-    classification_bitfield = unpack_from("<B", report_bytes, offset=4)[0]
+    classification_bitfield = unpack_from("<B", report_bytes, 4)[0]
     return ["Unknown", "On Table", "Stationary", "Stable", "In motion"][
         classification_bitfield
     ]
@@ -268,11 +266,11 @@ def _parse_activity_classifier_report(report_bytes):
         "OnStairs",
     ]
 
-    end_and_page_number = unpack_from("<B", report_bytes, offset=4)[0]
+    end_and_page_number = unpack_from("<B", report_bytes, 4)[0]
     # last_page = (end_and_page_number & 0b10000000) > 0
     page_number = end_and_page_number & 0x7F
-    most_likely = unpack_from("<B", report_bytes, offset=5)[0]
-    confidences = unpack_from("<BBBBBBBBB", report_bytes, offset=6)
+    most_likely = unpack_from("<B", report_bytes, 5)[0]
+    confidences = unpack_from("<BBBBBBBBB", report_bytes, 6)
 
     classification = {}
     classification["most_likely"] = activities[most_likely]
@@ -284,7 +282,7 @@ def _parse_activity_classifier_report(report_bytes):
 
 
 def _parse_shake_report(report_bytes):
-    shake_bitfield = unpack_from("<H", report_bytes, offset=4)[0]
+    shake_bitfield = unpack_from("<H", report_bytes, 4)[0]
     return (shake_bitfield & 0x111) > 0
 
 
@@ -293,11 +291,11 @@ def parse_sensor_id(buffer):
     if not buffer[0] == _SHTP_REPORT_PRODUCT_ID_RESPONSE:
         raise AttributeError("Wrong report id for sensor id: %s" % hex(buffer[0]))
 
-    sw_major = unpack_from("<B", buffer, offset=2)[0]
-    sw_minor = unpack_from("<B", buffer, offset=3)[0]
-    sw_patch = unpack_from("<H", buffer, offset=12)[0]
-    sw_part_number = unpack_from("<I", buffer, offset=4)[0]
-    sw_build_number = unpack_from("<I", buffer, offset=8)[0]
+    sw_major = unpack_from("<B", buffer, 2)[0]
+    sw_minor = unpack_from("<B", buffer, 3)[0]
+    sw_patch = unpack_from("<H", buffer, 12)[0]
+    sw_part_number = unpack_from("<I", buffer, 4)[0]
+    sw_build_number = unpack_from("<I", buffer, 8)[0]
 
     return (sw_part_number, sw_major, sw_minor, sw_patch, sw_build_number)
 
@@ -313,7 +311,7 @@ def _parse_command_response(report_bytes):
     # 5 R0-10 A set of response values. The interpretation of these values is specific
     # to the response for each command.
     report_body = unpack_from("<BBBBB", report_bytes)
-    response_values = unpack_from("<BBBBBBBBBBB", report_bytes, offset=5)
+    response_values = unpack_from("<BBBBBBBBBBB", report_bytes, 5)
     return (report_body, response_values)
 
 
@@ -348,30 +346,22 @@ def _separate_batch(packet, report_slices):
     # get first report id, loop up its report length
     # read that many bytes, parse them
     next_byte_index = 0
-    while next_byte_index < packet.header.data_length:
+    while next_byte_index < packet.header[2]:
         report_id = packet.data[next_byte_index]
         required_bytes = _report_length(report_id)
 
-        unprocessed_byte_count = packet.header.data_length - next_byte_index
+        unprocessed_byte_count = packet.header[2] - next_byte_index
 
         # handle incomplete remainder
         if unprocessed_byte_count < required_bytes:
             raise RuntimeError("Unprocessable Batch bytes", unprocessed_byte_count)
         # we have enough bytes to read
         # add a slice to the list that was passed in
-        report_slice = packet.data[next_byte_index : next_byte_index + required_bytes]
+        report_slice = packet.data[next_byte_index: next_byte_index + required_bytes]
 
         report_slices.append([report_slice[0], report_slice])
         next_byte_index = next_byte_index + required_bytes
 
-
-# class Report:
-#     _buffer = bytearray(DATA_BUFFER_SIZE)
-#     _report_obj = Report(_buffer)
-
-#     @classmethod
-#     def get_report(cls)
-#         return cls._report_obj
 
 
 class Packet:
@@ -379,21 +369,21 @@ class Packet:
 
     def __init__(self, packet_bytes):
         self.header = self.header_from_buffer(packet_bytes)
-        data_end_index = self.header.data_length + _BNO_HEADER_LEN
+        data_end_index = self.header[2] + _BNO_HEADER_LEN
         self.data = packet_bytes[_BNO_HEADER_LEN:data_end_index]
 
     def __str__(self):
 
-        length = self.header.packet_byte_count
+        length = self.header[3]
         outstr = "\n\t\t********** Packet *************\n"
         outstr += "DBG::\t\t HEADER:\n"
 
-        outstr += "DBG::\t\t Data Len: %d\n" % (self.header.data_length)
+        outstr += "DBG::\t\t Data Len: %d\n" % (self.header[3])
         outstr += "DBG::\t\t Channel: %s (%d)\n" % (
             channels[self.channel_number],
-            self.channel_number,
+            self.header[0],
         )
-        if self.channel_number in [
+        if self.header[0] in [
             _BNO_CHANNEL_CONTROL,
             _BNO_CHANNEL_INPUT_SENSOR_REPORTS,
         ]:
@@ -426,15 +416,20 @@ class Packet:
                     reports[self.data[1]],
                     hex(self.data[5]),
                 )
-        outstr += "DBG::\t\t Sequence number: %s\n" % self.header.sequence_number
+        outstr += "DBG::\t\t Sequence number: %s\n" % self.header[1]
         outstr += "\n"
         outstr += "DBG::\t\t Data:"
 
-        for idx, packet_byte in enumerate(self.data[:length]):
+        # TODO When debugging strign could overflow
+        # Just comment this section of code
+        idx=0
+        for packet_byte in self.data[:length]:
             packet_index = idx + 4
             if (packet_index % 4) == 0:
                 outstr += "\nDBG::\t\t[0x{:02X}] ".format(packet_index)
             outstr += "0x{:02X} ".format(packet_byte)
+            idx += 1
+
         outstr += "\n"
         outstr += "\t\t*******************************\n"
 
@@ -448,18 +443,18 @@ class Packet:
     @property
     def channel_number(self):
         """The packet channel"""
-        return self.header.channel_number
+        return self.header[0]
 
     @classmethod
     def header_from_buffer(cls, packet_bytes):
         """Creates a `PacketHeader` object from a given buffer"""
         packet_byte_count = unpack_from("<H", packet_bytes)[0]
         packet_byte_count &= ~0x8000
-        channel_number = unpack_from("<B", packet_bytes, offset=2)[0]
-        sequence_number = unpack_from("<B", packet_bytes, offset=3)[0]
+        channel_number = unpack_from("<B", packet_bytes, 2)[0]
+        sequence_number = unpack_from("<B", packet_bytes, 3)[0]
         data_length = max(0, packet_byte_count - 4)
 
-        header = PacketHeader(
+        header = (
             channel_number, sequence_number, data_length, packet_byte_count
         )
         return header
@@ -468,9 +463,9 @@ class Packet:
     def is_error(cls, header):
         """Returns True if the header is an error condition"""
 
-        if header.channel_number > 5:
+        if header[0] > 5:
             return True
-        if header.packet_byte_count == 0xFFFF and header.sequence_number == 0xFF:
+        if header[3] == 0xFFFF and header[1] == 0xFF:
             return True
         return False
 
@@ -484,7 +479,6 @@ class BNO08X:  # pylint: disable=too-many-instance-attributes, too-many-public-m
 
     def __init__(self, reset=None, debug=False):
         self._debug = debug
-        self._reset = reset
         self._dbg("********** __init__ *************")
         self._data_buffer = bytearray(DATA_BUFFER_SIZE)
         self._command_buffer = bytearray(12)
@@ -508,15 +502,14 @@ class BNO08X:  # pylint: disable=too-many-instance-attributes, too-many-public-m
         self.initialize()
 
     def initialize(self):
-        """Initialize the sensor"""
+        #Initialize the sensor
         for _ in range(3):
-            self.hard_reset()
             self.soft_reset()
             try:
                 if self._check_id():
                     break
             except:  # pylint:disable=bare-except
-                time.sleep(0.5)
+                utime.sleep(10)
         else:
             raise RuntimeError("Could not read ID")
 
@@ -737,7 +730,7 @@ class BNO08X:  # pylint: disable=too-many-instance-attributes, too-many-public-m
 
     def _send_me_command(self, subcommand_params):
 
-        start_time = time.monotonic()
+        start_time = utime.ticks_ms()
         local_buffer = self._command_buffer
         _insert_command_request_report(
             _ME_CALIBRATE,
@@ -755,7 +748,7 @@ class BNO08X:  # pylint: disable=too-many-instance-attributes, too-many-public-m
     def save_calibration_data(self):
         """Save the self-calibration data"""
         # send a DCD save command
-        start_time = time.monotonic()
+        start_time = utime.ticks_ms()
         local_buffer = bytearray(12)
         _insert_command_request_report(
             _SAVE_DCD,
@@ -790,23 +783,23 @@ class BNO08X:  # pylint: disable=too-many-instance-attributes, too-many-public-m
         self._dbg("")
         self._dbg(" ** DONE! **")
 
-    def _wait_for_packet_type(self, channel_number, report_id=None, timeout=5.0):
+    def _wait_for_packet_type(self, channel_number, report_id=None, timeout=_PACKET_READ_TIMEOUT):
         if report_id:
             report_id_str = " with report id %s" % hex(report_id)
         else:
             report_id_str = ""
         self._dbg("** Waiting for packet on channel", channel_number, report_id_str)
-        start_time = time.monotonic()
+        start_time = utime.ticks_ms()
         while _elapsed(start_time) < timeout:
             new_packet = self._wait_for_packet()
 
-            if new_packet.channel_number == channel_number:
+            if new_packet.header[0] == channel_number:
                 if report_id:
                     if new_packet.report_id == report_id:
                         return new_packet
                 else:
                     return new_packet
-            if new_packet.channel_number not in (
+            if new_packet.header[0] not in (
                 BNO_CHANNEL_EXE,
                 BNO_CHANNEL_SHTP_COMMAND,
             ):
@@ -816,7 +809,7 @@ class BNO08X:  # pylint: disable=too-many-instance-attributes, too-many-public-m
         raise RuntimeError("Timed out waiting for a packet on channel", channel_number)
 
     def _wait_for_packet(self, timeout=_PACKET_READ_TIMEOUT):
-        start_time = time.monotonic()
+        start_time = utime.ticks_ms()
         while _elapsed(start_time) < timeout:
             if not self._data_ready:
                 continue
@@ -828,8 +821,8 @@ class BNO08X:  # pylint: disable=too-many-instance-attributes, too-many-public-m
     # TODO: this is wrong there should be one per channel per direction
     # and apparently per report as well
     def _update_sequence_number(self, new_packet):
-        channel = new_packet.channel_number
-        seq = new_packet.header.sequence_number
+        channel = new_packet.header[0]
+        seq = new_packet.header[1]
         self._sequence_number[channel] = seq
 
     def _handle_packet(self, packet):
@@ -881,11 +874,11 @@ class BNO08X:  # pylint: disable=too-many-instance-attributes, too-many-public-m
         command_status, *_rest = response_values
 
         if command == _ME_CALIBRATE and command_status == 0:
-            self._me_calibration_started_at = time.monotonic()
+            self._me_calibration_started_at = utime.ticks_ms()
 
         if command == _SAVE_DCD:
             if command_status == 0:
-                self._dcd_saved_at = time.monotonic()
+                self._dcd_saved_at = utime.ticks_ms()
             else:
                 raise RuntimeError("Unable to save calibration data")
 
@@ -896,11 +889,13 @@ class BNO08X:  # pylint: disable=too-many-instance-attributes, too-many-public-m
         self._dbg("\tProcessing report:", reports[report_id])
         if self._debug:
             outstr = ""
-            for idx, packet_byte in enumerate(report_bytes):
+            idx = 0
+            for packet_byte in report_bytes:
                 packet_index = idx
                 if (packet_index % 4) == 0:
                     outstr += "\nDBG::\t\t[0x{:02X}] ".format(packet_index)
                 outstr += "0x{:02X} ".format(packet_byte)
+                idx += 1
             self._dbg(outstr)
             self._dbg("")
 
@@ -971,7 +966,7 @@ class BNO08X:  # pylint: disable=too-many-instance-attributes, too-many-public-m
         self._dbg("Enabling", feature_id)
         self._send_packet(_BNO_CHANNEL_CONTROL, set_feature_report)
 
-        start_time = time.monotonic()  # 1
+        start_time = utime.ticks_ms()  # 1
 
         while _elapsed(start_time) < _FEATURE_ENABLE_TIMEOUT:
             self._process_available_packets(max_packets=10)
@@ -1027,26 +1022,13 @@ class BNO08X:  # pylint: disable=too-many-instance-attributes, too-many-public-m
     def _get_data(self, index, fmt_string):
         # index arg is not including header, so add 4 into data buffer
         data_index = index + 4
-        return unpack_from(fmt_string, self._data_buffer, offset=data_index)[0]
+        return unpack_from(fmt_string, self._data_buffer, data_index)[0]
 
     # pylint:disable=no-self-use
     @property
     def _data_ready(self):
         raise RuntimeError("Not implemented")
 
-    def hard_reset(self):
-        """Hardware reset the sensor to an initial unconfigured state"""
-        if not self._reset:
-            return
-        import digitalio  # pylint:disable=import-outside-toplevel
-
-        self._reset.direction = digitalio.Direction.OUTPUT
-        self._reset.value = True
-        time.sleep(0.01)
-        self._reset.value = False
-        time.sleep(0.01)
-        self._reset.value = True
-        time.sleep(0.01)
 
     def soft_reset(self):
         """Reset the sensor to an initial unconfigured state"""
@@ -1054,15 +1036,15 @@ class BNO08X:  # pylint: disable=too-many-instance-attributes, too-many-public-m
         data = bytearray(1)
         data[0] = 1
         _seq = self._send_packet(BNO_CHANNEL_EXE, data)
-        time.sleep(0.5)
+        utime.sleep(0.5)
         _seq = self._send_packet(BNO_CHANNEL_EXE, data)
-        time.sleep(0.5)
+        utime.sleep(0.5)
 
         for _i in range(3):
             try:
                 _packet = self._read_packet()
             except PacketError:
-                time.sleep(0.5)
+                utime.sleep(0.5)
 
         self._dbg("OK!")
         # all is good!
