@@ -7,7 +7,7 @@ and xbee i2c capable devices
 
 * Based upon "adafruit_BNO080" for CPython by Bryan Siepert
 * Author(s): Bryan Siepert
-* Port to Micropython by nkmakes.github.io
+* Port to Micropython by Niko Rodriguez
 
 
 Dependencies
