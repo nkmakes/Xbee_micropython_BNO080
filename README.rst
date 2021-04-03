@@ -15,9 +15,17 @@ This driver depends on:
 
 * `Digi XBee MicroPython PyCharm IDE Plugin <https://www.digi.com/products/embedded-systems/digi-xbee/digi-xbee-tools/digi-xbee-pycharm-ide-plug-in>`_
 
+Added features
+===============
+Redirection of packets can be activated using command
+
 Known issues
 =============
 When debugging, string containing packets can overflow
+
+Not Ported
+===========
+Only i2c mode
 
 
 Usage Example
