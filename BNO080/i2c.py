@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021 Niko Rodriguez
+# SPDX-FileCopyrightText: Copyright (c) 2020 Bryan Siepert for Adafruit Industries
 #
 # SPDX-License-Identifier: MIT
 """
@@ -9,7 +9,7 @@
 from struct import pack_into
 from machine import Pin
 import utime
-from BNO080 import BNO08X, DATA_BUFFER_SIZE, const, Packet, PacketError
+from BNO080.BNO080 import BNO08X, DATA_BUFFER_SIZE, const, Packet, PacketError
 
 # from tutils import enumerate
 _BNO08X_DEFAULT_ADDRESS = const(0x4B)
@@ -22,16 +22,15 @@ class BNO08X_I2C(BNO08X):
     """
 
     def __init__(
-            self, i2c, reset=None, address=_BNO08X_DEFAULT_ADDRESS, debug=False
+            self, i2c, reset=None, address=_BNO08X_DEFAULT_ADDRESS, debug=False, xbee_dir=0
     ):
         self._reset = Pin("D16", Pin.OUT, value=1)
-        self.hard_reset()
         utime.sleep(1)
         devices = i2c.scan()
         assert address in devices, "Did not find slave %d in scan: %s" % (address, devices)
         self.slave_addr = address
         self.bus_device_obj = i2c
-        super().__init__(reset, debug)
+        super().__init__(reset, debug, xbee_dir)
 
     def _send_packet(self, channel, data):
         data_length = len(data)
@@ -130,6 +129,16 @@ class BNO08X_I2C(BNO08X):
             self._dbg("channel number out of range:", header[0])
         else:
             ready = header[2] > 0
+        """
+        if header.packet_byte_count == 0x7FFF:
+            print("Byte count is 0x7FFF/0xFFFF; Error?")
+            if header.sequence_number == 0xFF:
+                print("Sequence number is 0xFF; Error?")
+            ready = False
+        
+        else:
+            ready = header[2] > 0
+        """
 
         # self._dbg("\tdata ready", ready)
         return ready

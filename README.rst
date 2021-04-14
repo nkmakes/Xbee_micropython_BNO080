@@ -8,7 +8,6 @@ and xbee i2c capable devices
 * Forked from `adafruit_BNO080 for CPython by Bryan Siepert <https://github.com/adafruit/Adafruit_CircuitPython_BNO08x>`_
 * Port to Micropython by Niko Rodriguez
 
-
 Dependencies
 =============
 This driver depends on:
@@ -18,7 +17,8 @@ This driver depends on:
 Known issues
 =============
 When debugging, string containing packets can overflow
-
+Only i2c implemented
+Not all packets can be "bridged"
 
 Usage Example
 =============

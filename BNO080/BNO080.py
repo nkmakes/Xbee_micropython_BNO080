@@ -1,5 +1,5 @@
 # pylint:disable=too-many-lines
-# SPDX-FileCopyrightText: Copyright (c) 2021 Niko Rodriguez
+# SPDX-FileCopyrightText: Copyright (c) 2020 Niko Rodriguez
 #
 # SPDX-License-Identifier: MIT
 """
@@ -12,7 +12,7 @@ and xbee i2c capable devices
 
 * Based upon "adafruit_BNO080" for CPython by Bryan Siepert
 * Author(s): Bryan Siepert
-* Port to Micropython by Niko Rodriguez
+* Port to Micropython by nkmakes.github.io
 
 Implementation Notes
 --------------------
@@ -24,10 +24,12 @@ Implementation Notes
 
 **Software and Dependencies:**
 
-* `Digi XBee MicroPython PyCharm IDE Plugin <https://www.digi.com/products/embedded-systems/digi-xbee/digi-xbee-tools/digi-xbee-pycharm-ide-plug-in>`_
+* `Xbee machine module <https:# github.com/adafruit/Adafruit_CircuitPython_BusDevice>`_
 """
 __version__ = "0.0.0-auto.0"
-__repo__ = "https:# github.com/nkmakes/Xbee_micropython_BNO080.git"
+__repo__ = "https:# github.com/adafruit/Adafruit_CircuitPython_BNO08x.git"
+#from collections import namedtuple
+import xbee
 from micropython import const
 from ustruct import unpack_from, pack_into
 import time
@@ -101,7 +103,7 @@ BNO_REPORT_GYRO_INTEGRATED_ROTATION_VECTOR = const(0x2A)
 # CALIBRATION
 # RAW ACCEL, MAG, GYRO # Sfe says each needs the non-raw enabled to work
 
-_DEFAULT_REPORT_INTERVAL = const(50000)  # in microseconds = 50ms
+_DEFAULT_REPORT_INTERVAL = const(100000)  # in microseconds = 50ms
 _QUAT_READ_TIMEOUT = 500  # timeout in seconds
 #_PACKET_READ_TIMEOUT = 20000  # timeout in seconds
 _PACKET_READ_TIMEOUT = 20000000
@@ -144,6 +146,7 @@ _AVAIL_SENSOR_REPORTS = {
     BNO_REPORT_MAGNETOMETER: (_Q_POINT_4_SCALAR, 3, 10),
     BNO_REPORT_LINEAR_ACCELERATION: (_Q_POINT_8_SCALAR, 3, 10),
     BNO_REPORT_ROTATION_VECTOR: (_Q_POINT_14_SCALAR, 4, 14),
+    #BNO_REPORT_ROTATION_VECTOR: (bytes(14)),
     BNO_REPORT_GEOMAGNETIC_ROTATION_VECTOR: (_Q_POINT_12_SCALAR, 4, 14),
     BNO_REPORT_GAME_ROTATION_VECTOR: (_Q_POINT_14_SCALAR, 4, 12),
     BNO_REPORT_STEP_COUNTER: (1, 1, 12),
@@ -169,7 +172,8 @@ _INITIAL_REPORTS = {
         "In-Vehicle": -1,
     },
     BNO_REPORT_STABILITY_CLASSIFIER: "Unknown",
-    BNO_REPORT_ROTATION_VECTOR: (0.0, 0.0, 0.0, 0.0),
+    #BNO_REPORT_ROTATION_VECTOR: (0.0, 0.0, 0.0, 0.0),
+    BNO_REPORT_ROTATION_VECTOR: (bytes(2), bytes(2), bytes(2), bytes(2), bytes(2)),
     BNO_REPORT_GAME_ROTATION_VECTOR: (0.0, 0.0, 0.0, 0.0),
     BNO_REPORT_GEOMAGNETIC_ROTATION_VECTOR: (0.0, 0.0, 0.0, 0.0),
 }
@@ -177,6 +181,7 @@ _INITIAL_REPORTS = {
 _ENABLED_ACTIVITIES = (
     0x1FF  # All activities; 1 bit set for each of 8 activities, + Unknown
 )
+
 
 DATA_BUFFER_SIZE = const(256)  # data buffer size. obviously eats ram
 
@@ -217,8 +222,9 @@ def _parse_sensor_report_data(report_bytes):
     for _offset_idx in range(count):
         total_offset = data_offset + (_offset_idx * 2)
         raw_data = unpack_from(format_str, report_bytes, total_offset)[0]
-        scaled_data = raw_data * scalar
-        results.append(scaled_data)
+        #scaled_data = raw_data * scalar
+        #results.append(scaled_data)
+        results.append(raw_data)
     results_tuple = tuple(results)
 
     return (results_tuple, accuracy)
@@ -375,7 +381,9 @@ class Packet:
     def __str__(self):
 
         length = self.header[3]
+
         outstr = "\n\t\t********** Packet *************\n"
+        """
         outstr += "DBG::\t\t HEADER:\n"
 
         outstr += "DBG::\t\t Data Len: %d\n" % (self.header[3])
@@ -383,6 +391,7 @@ class Packet:
             channels[self.channel_number],
             self.header[0],
         )
+        """
         if self.header[0] in [
             _BNO_CHANNEL_CONTROL,
             _BNO_CHANNEL_INPUT_SENSOR_REPORTS,
@@ -416,12 +425,11 @@ class Packet:
                     reports[self.data[1]],
                     hex(self.data[5]),
                 )
+        """
         outstr += "DBG::\t\t Sequence number: %s\n" % self.header[1]
         outstr += "\n"
         outstr += "DBG::\t\t Data:"
-
-        # TODO When debugging strign could overflow
-        # Just comment this section of code
+        """
         idx=0
         for packet_byte in self.data[:length]:
             packet_index = idx + 4
@@ -477,7 +485,7 @@ class BNO08X:  # pylint: disable=too-many-instance-attributes, too-many-public-m
 
     """
 
-    def __init__(self, reset=None, debug=False):
+    def __init__(self, reset=None, debug=False, xbee_dir=0):
         self._debug = debug
         self._dbg("********** __init__ *************")
         self._data_buffer = bytearray(DATA_BUFFER_SIZE)
@@ -497,8 +505,12 @@ class BNO08X:  # pylint: disable=too-many-instance-attributes, too-many-public-m
         self._wait_for_initialize = True
         self._init_complete = False
         self._id_read = False
+        self._enabled_transmissions = []
         # for saving the most recent reading when decoding several packets
         self._readings = {}
+        if xbee_dir != 0:
+            self._target_64bit_address = xbee_dir
+
         self.initialize()
 
     def initialize(self):
@@ -899,6 +911,12 @@ class BNO08X:  # pylint: disable=too-many-instance-attributes, too-many-public-m
             self._dbg(outstr)
             self._dbg("")
 
+        if report_id in self._enabled_transmissions:
+            try:
+                xbee.transmit(self._target_64bit_address, report_bytes)
+            except Exception as e:
+                print("error sending")
+
         if report_id == BNO_REPORT_STEP_COUNTER:
             self._readings[report_id] = _parse_step_couter_report(report_bytes)
             return
@@ -925,10 +943,15 @@ class BNO08X:  # pylint: disable=too-many-instance-attributes, too-many-public-m
         sensor_data, accuracy = _parse_sensor_report_data(report_bytes)
         if report_id == BNO_REPORT_MAGNETOMETER:
             self._magnetometer_accuracy = accuracy
+
+        if report_id == BNO_REPORT_ROTATION_VECTOR:
+            self._readings[report_id] = report_bytes
+        else:
+            self._readings[report_id] = sensor_data
         # TODO: FIXME; Sensor reports are batched in a LIFO which means that multiple reports
         # for the same type will end with the oldest/last being kept and the other
         # newer reports thrown away
-        self._readings[report_id] = sensor_data
+
 
     # TODO: Make this a Packet creation
     @staticmethod
@@ -1061,3 +1084,7 @@ class BNO08X:  # pylint: disable=too-many-instance-attributes, too-many-public-m
 
     def _get_report_seq_id(self, report_id):
         return self._two_ended_sequence_numbers.get(report_id, 0)
+
+    def enable_report_transmission(self, feature_id):
+        self._dbg("\n********** Enabling transmission of feature id:", feature_id, "**********")
+        self._enabled_transmissions.append(feature_id)
